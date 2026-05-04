@@ -60,6 +60,9 @@ contract GovernanceVoting is AccessControl, ReentrancyGuard, Pausable {
     error NoVotingWeight(address voter);
     error QuorumNotReached(uint256 proposalId, uint256 totalVotes, uint256 quorum);
     error ZeroQuorum();
+    error NotProposalCreator(address caller, address creator);
+    error ProposalAlreadyCancelled(uint256 proposalId);
+    error NotYetVoted(uint256 proposalId, address voter);
 
     // ──────────────────────────────────────────────────────────────────────
     // Constants
@@ -102,6 +105,7 @@ contract GovernanceVoting is AccessControl, ReentrancyGuard, Pausable {
         address           creator;           // Who created the proposal
         ProposalCategory  category;          // Proposal type
         bool              exists;            // Guard against invalid IDs
+        bool              cancelled;         // Proposal was cancelled/deleted
     }
 
     struct VoterInfo {
@@ -124,6 +128,7 @@ contract GovernanceVoting is AccessControl, ReentrancyGuard, Pausable {
         address          creator;
         ProposalCategory category;
         ProposalStatus   status;
+        bool             cancelled;
     }
 
     struct WinnerInfo {
@@ -177,6 +182,23 @@ contract GovernanceVoting is AccessControl, ReentrancyGuard, Pausable {
     event VoterRegistered(address indexed voter, uint256 weight);
     event VoterRemoved(address indexed voter);
     event VoterWeightUpdated(address indexed voter, uint256 newWeight);
+
+    event ProposalEdited(
+        uint256 indexed proposalId,
+        string           newDescription,
+        string[]         newOptions,
+        uint256          newDeadline
+    );
+
+    event ProposalCancelled(uint256 indexed proposalId, string reason);
+
+    event VoteChanged(
+        uint256 indexed proposalId,
+        address indexed voter,
+        uint256          oldOptionIndex,
+        uint256          newOptionIndex,
+        uint256          weight
+    );
 
     // ──────────────────────────────────────────────────────────────────────
     // Constructor
@@ -318,6 +340,95 @@ contract GovernanceVoting is AccessControl, ReentrancyGuard, Pausable {
         );
     }
 
+    /**
+     * @notice Edit an active proposal (before voting ends).
+     * Only the proposal creator can edit.
+     *
+     * @param _proposalId   Target proposal ID.
+     * @param _description  New description.
+     * @param _options      New options array.
+     * @param _newDeadline  New deadline (unix timestamp).
+     */
+    function editProposal(
+        uint256         _proposalId,
+        string calldata _description,
+        string[] calldata _options,
+        uint256         _newDeadline
+    )
+        external
+        validProposal(_proposalId)
+    {
+        Proposal storage p = _proposals[_proposalId];
+
+        if (msg.sender != p.creator)
+            revert NotProposalCreator(msg.sender, p.creator);
+        if (p.cancelled)
+            revert ProposalAlreadyCancelled(_proposalId);
+        if (block.timestamp > p.deadline)
+            revert VotingClosed(_proposalId, p.deadline);
+        if (bytes(_description).length == 0)
+            revert EmptyDescription();
+        if (_options.length < 2)
+            revert EmptyOptions();
+        if (_options.length > MAX_OPTIONS)
+            revert TooManyOptions(_options.length, MAX_OPTIONS);
+        if (_newDeadline <= block.timestamp)
+            revert InvalidDuration();
+
+        // Update proposal fields
+        p.description = _description;
+        p.deadline = _newDeadline;
+
+        // Preserve votes for existing options, add new options with 0 votes
+        uint256 oldOptionCount = p.options.length;
+        for (uint256 i; i < _options.length; ) {
+            if (i < oldOptionCount) {
+                // Update existing option text, preserve vote count
+                p.options[i] = _options[i];
+            } else {
+                // Add new option with 0 votes
+                p.options.push(_options[i]);
+                p.voteCounts.push(0);
+            }
+            unchecked { ++i; }
+        }
+
+        // If fewer options provided, remove excess ones (shouldn't happen in normal flow)
+        if (_options.length < oldOptionCount) {
+            for (uint256 i = _options.length; i < oldOptionCount; ) {
+                p.options.pop();
+                p.voteCounts.pop();
+                unchecked { ++i; }
+            }
+        }
+
+        emit ProposalEdited(_proposalId, _description, _options, _newDeadline);
+    }
+
+    /**
+     * @notice Cancel a proposal (only creator can cancel, voting must be open).
+     *
+     * @param _proposalId Target proposal ID.
+     * @param _reason     Reason for cancellation.
+     */
+    function cancelProposal(uint256 _proposalId, string calldata _reason)
+        external
+        validProposal(_proposalId)
+    {
+        Proposal storage p = _proposals[_proposalId];
+
+        if (msg.sender != p.creator)
+            revert NotProposalCreator(msg.sender, p.creator);
+        if (p.cancelled)
+            revert ProposalAlreadyCancelled(_proposalId);
+        if (block.timestamp > p.deadline)
+            revert VotingClosed(_proposalId, p.deadline);
+
+        p.cancelled = true;
+
+        emit ProposalCancelled(_proposalId, _reason);
+    }
+
     // ──────────────────────────────────────────────────────────────────────
     // Voting
     // ──────────────────────────────────────────────────────────────────────
@@ -347,6 +458,8 @@ contract GovernanceVoting is AccessControl, ReentrancyGuard, Pausable {
         Proposal storage p = _proposals[proposalId];
         VoterInfo storage vi = voters[msg.sender];
 
+        if (p.cancelled)
+            revert ProposalAlreadyCancelled(proposalId);
         if (block.timestamp > p.deadline)
             revert VotingClosed(proposalId, p.deadline);
         if (_votes[proposalId][msg.sender] != 0)
@@ -366,6 +479,51 @@ contract GovernanceVoting is AccessControl, ReentrancyGuard, Pausable {
         p.totalVotes              += effectiveWeight;
 
         emit VoteCast(proposalId, msg.sender, optionIndex, effectiveWeight);
+    }
+
+    /**
+     * @notice Change your vote on an active proposal.
+     *
+     * @param proposalId   Target proposal.
+     * @param newOptionIndex New choice index.
+     */
+    function changeVote(uint256 proposalId, uint256 newOptionIndex)
+        external
+        nonReentrant
+        whenNotPaused
+        onlyRole(VOTER_ROLE)
+        validProposal(proposalId)
+    {
+        Proposal storage p = _proposals[proposalId];
+        VoterInfo storage vi = voters[msg.sender];
+
+        if (p.cancelled)
+            revert ProposalAlreadyCancelled(proposalId);
+        if (block.timestamp > p.deadline)
+            revert VotingClosed(proposalId, p.deadline);
+        if (_votes[proposalId][msg.sender] == 0)
+            revert NotYetVoted(proposalId, msg.sender);
+        if (newOptionIndex >= p.options.length)
+            revert InvalidOption(newOptionIndex, p.options.length);
+
+        // Get effective weight
+        uint256 effectiveWeight = _resolveWeight(msg.sender);
+
+        // Get old vote (1-indexed, so subtract 1)
+        uint256 oldOptionIndex = _votes[proposalId][msg.sender] - 1;
+
+        // Remove old vote weight
+        p.voteCounts[oldOptionIndex] -= effectiveWeight;
+        p.totalVotes                  -= effectiveWeight;
+
+        // Add new vote weight
+        p.voteCounts[newOptionIndex] += effectiveWeight;
+        p.totalVotes                  += effectiveWeight;
+
+        // Update vote
+        _votes[proposalId][msg.sender] = newOptionIndex + 1;
+
+        emit VoteChanged(proposalId, msg.sender, oldOptionIndex, newOptionIndex, effectiveWeight);
     }
 
     /**
@@ -599,7 +757,8 @@ contract GovernanceVoting is AccessControl, ReentrancyGuard, Pausable {
             quorum:      p.quorum,
             creator:     p.creator,
             category:    p.category,
-            status:      status
+            status:      status,
+            cancelled:   p.cancelled
         });
     }
 }

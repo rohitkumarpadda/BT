@@ -1,5 +1,5 @@
 {
-  "address": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+  "address": "0x0DCd1Bf9A1b36cE34237eEaFef220932846BCD82",
   "abi": [
     {
       "inputs": [],
@@ -142,6 +142,49 @@
     {
       "inputs": [
         {
+          "internalType": "address",
+          "name": "caller",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "creator",
+          "type": "address"
+        }
+      ],
+      "name": "NotProposalCreator",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "proposalId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "voter",
+          "type": "address"
+        }
+      ],
+      "name": "NotYetVoted",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "proposalId",
+          "type": "uint256"
+        }
+      ],
+      "name": "ProposalAlreadyCancelled",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "uint256",
           "name": "proposalId",
           "type": "uint256"
@@ -246,6 +289,25 @@
           "type": "uint256"
         },
         {
+          "indexed": false,
+          "internalType": "string",
+          "name": "reason",
+          "type": "string"
+        }
+      ],
+      "name": "ProposalCancelled",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "proposalId",
+          "type": "uint256"
+        },
+        {
           "indexed": true,
           "internalType": "address",
           "name": "creator",
@@ -277,6 +339,37 @@
         }
       ],
       "name": "ProposalCreated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "proposalId",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "newDescription",
+          "type": "string"
+        },
+        {
+          "indexed": false,
+          "internalType": "string[]",
+          "name": "newOptions",
+          "type": "string[]"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "newDeadline",
+          "type": "uint256"
+        }
+      ],
+      "name": "ProposalEdited",
       "type": "event"
     },
     {
@@ -396,6 +489,43 @@
         }
       ],
       "name": "VoteCast",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "proposalId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "voter",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "oldOptionIndex",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "newOptionIndex",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "weight",
+          "type": "uint256"
+        }
+      ],
+      "name": "VoteChanged",
       "type": "event"
     },
     {
@@ -580,6 +710,42 @@
     {
       "inputs": [
         {
+          "internalType": "uint256",
+          "name": "_proposalId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "string",
+          "name": "_reason",
+          "type": "string"
+        }
+      ],
+      "name": "cancelProposal",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "proposalId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "newOptionIndex",
+          "type": "uint256"
+        }
+      ],
+      "name": "changeVote",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "string",
           "name": "_description",
           "type": "string"
@@ -630,6 +796,34 @@
         }
       ],
       "name": "delegateVote",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_proposalId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "string",
+          "name": "_description",
+          "type": "string"
+        },
+        {
+          "internalType": "string[]",
+          "name": "_options",
+          "type": "string[]"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_newDeadline",
+          "type": "uint256"
+        }
+      ],
+      "name": "editProposal",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -694,6 +888,11 @@
               "internalType": "enum GovernanceVoting.ProposalStatus",
               "name": "status",
               "type": "uint8"
+            },
+            {
+              "internalType": "bool",
+              "name": "cancelled",
+              "type": "bool"
             }
           ],
           "internalType": "struct GovernanceVoting.ProposalView[]",
@@ -770,6 +969,11 @@
               "internalType": "enum GovernanceVoting.ProposalStatus",
               "name": "status",
               "type": "uint8"
+            },
+            {
+              "internalType": "bool",
+              "name": "cancelled",
+              "type": "bool"
             }
           ],
           "internalType": "struct GovernanceVoting.ProposalView",
@@ -851,6 +1055,11 @@
               "internalType": "enum GovernanceVoting.ProposalStatus",
               "name": "status",
               "type": "uint8"
+            },
+            {
+              "internalType": "bool",
+              "name": "cancelled",
+              "type": "bool"
             }
           ],
           "internalType": "struct GovernanceVoting.ProposalView[]",
