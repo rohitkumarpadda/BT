@@ -397,6 +397,11 @@ contract GovernanceVoting is AccessControl, ReentrancyGuard, Pausable {
             if (cursor == msg.sender) revert CircularDelegation(_delegate);
         }
 
+        // Transfer delegator's weight to delegate
+        uint256 delegatorWeight = voters[msg.sender].weight;
+        voters[_delegate].weight += delegatorWeight;
+        voters[msg.sender].weight = 0;
+
         voters[msg.sender].delegate     = _delegate;
         voters[msg.sender].hasDelegated = true;
 
@@ -559,17 +564,14 @@ contract GovernanceVoting is AccessControl, ReentrancyGuard, Pausable {
      */
     function _resolveWeight(address voter) internal view returns (uint256) {
         VoterInfo storage vi = voters[voter];
-        uint256 w = vi.weight;
-
-        // If anyone has delegated to this voter, add their weight too
-        // NOTE: We don't iterate all voters here. Weight already accumulated
-        // by delegators is tracked at the time they delegate (see delegateVote).
-        // We rely on the simplification that delegate gains the raw weight.
+        
         if (vi.hasDelegated) {
-            // Voter delegated away — their weight is transferred to delegate
+            // Voter delegated away — they cannot vote directly
             return 0;
         }
-        return w;
+        
+        // Return own weight (includes delegations added during delegateVote)
+        return vi.weight;
     }
 
     /**
